@@ -367,25 +367,7 @@ void onGetWeather(HttpClient& client, bool successful) {
 		  }
 
 
-// Produces :Fatal exception 2(InstructionRetchErrorCause):
-//		epc1=0x3fff0988, epc2=0x00000000, epc3=0x00000000, excvaddr=0x3fff0988, depc=0x00000000
-//		if (jsonWeather["main"]["temp"].is<double>()) {
-//			// we have a double
-//
-//			Serial.println("WE HAVE A DOUBLE !!!!");
-//
-//			double temp_temp = jsonWeather["main"]["temp"].as<double>();
-////			display_data.weather_Temp = (int)lround(temp_temp);
-//		} else if (jsonWeather["main"]["temp"].is<int>()) {
-////			// most likely an integer
-////			display_data.weather_Temp = jsonWeather["main"]["temp"].as<int>();
-//		} else {
-////			display_data.weather_Temp = -273;
-//		}
 		display_data.weather_Temp = (int) lround ( jsonWeather["main"]["temp"].as<double>() );
-
-
-
 		display_data.weather_Humidity = (int) jsonWeather["main"]["humidity"].as<int>();
 		display_data.weather_Description = jsonWeather["weather"][0]["description"].as<String>();
 

@@ -17,24 +17,4 @@
 
 
 
-//class NetWeatherCfg : public DynamicJsonBuffer , public JsonObject (DynamicJsonBuffer.) {
-//
-//String NetworkSSID;
-//String NetworkPassword;
-//
-//
-//
-//public:
-////JsonObject& cfg ( jsonBuffer.createObject() )
-////	JsonObject *cfg;
-//	NetWeatherCfg ();
-//	String getNetSSID ();
-//	String getNetPassword ();
-//
-//	void saveCfg ();
-//};
-
-
-
-
 #endif /* INCLUDE_CONFIGURATION_H_ */

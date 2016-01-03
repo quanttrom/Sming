@@ -16,7 +16,7 @@ int __errno;
 LiquidCrystal lcd(4,2,14,12,13,15);
 
 Timer heartBeatTimer;
-bool heatBeatState = true;
+bool heartBeatState = true;
 
 Timer stagingTimer;
 Timer weatherTimer;
@@ -144,6 +144,7 @@ void stageHandler(){
 		default:
 			// We shouldn't be here...
 			current_state = state_reboot;
+			break;
 	}
 
 
@@ -172,7 +173,7 @@ void saveConfig(JsonObject& cfg_local){
 
 void init()
 {
-	spiffs_mount(); // Mount file system, in order to work with files
+//	spiffs_mount(); // Mount file system, in order to work with files
 	// Initialize local reference with our config
 	JsonObject& cfg_local=getConfig();
 	// point global pointer to our reference
@@ -181,8 +182,6 @@ void init()
 
 	Serial.begin(SERIAL_BAUD_RATE); // 115200 by default
 	Serial.systemDebugOutput(true); // Allow debug output to serial
-
-
 
 	//Change CPU freq. to 160MHZ
 	System.setCpuFrequency(eCF_160MHz);
@@ -195,7 +194,8 @@ void init()
 	heartBeatTimer.initializeMs(1000, heartBeatBlink).start();
 
 	WifiAccessPoint.enable(false);
-	WifiStation.config( cfg_local["network"]["ssid"].as<String>() , cfg_local["network"]["password"].as<String>() );
+	WifiStation.waitConnection(WiFiConnected, 30, WiFiFail);
+  	WifiStation.config( cfg_local["network"]["ssid"].as<String>() , cfg_local["network"]["password"].as<String>() );
 	WifiStation.enable(true);
 
 
@@ -220,7 +220,6 @@ void init()
   lcd.print("WiFi ...");
   lcd.blink();
 
-  WifiStation.waitConnection(WiFiConnected, 30, WiFiFail);
 
 
 
@@ -232,6 +231,7 @@ void onGotTime(NtpClient &client, time_t time){
 	client.setAutoQuery(true);
 	client.setAutoUpdateSystemClock(true);
 	SystemClock.setTime(time,eTZ_UTC);
+
 }
 
 void WiFiConnected(){
@@ -279,7 +279,7 @@ void waitForData(){
 	if (readyWeather && readyTime ){
 		showTime();
 	} else {
-		Serial.println("WeatherTime NOT READY !!!");
+		Serial.print('.');
 		stagingTimer.initializeMs(500, waitForData).startOnce();
 	}
 }
@@ -328,10 +328,10 @@ void showWeather(){
 
 	char temp_units;
 	switch ( cfg_local["weather"]["units"].as<int>() ) {
-	case Fahrenheit: temp_units = 'F'; break;
-	case Kelvin: temp_units = 'K'; break;
-	case Celcius: temp_units = 'C'; break;
-	default: temp_units = 'C';
+		case Fahrenheit: temp_units = 'F'; break;
+		case Kelvin: temp_units = 'K'; break;
+		case Celcius: temp_units = 'C'; break;
+		default: temp_units = 'C';
 	}
 	lcd.print(temp_units);
 	lcd.setCursor(10,0);
@@ -349,41 +349,49 @@ void onGetWeather(HttpClient& client, bool successful) {
 	// Localize the config
 	JsonObject& cfg_local = *cfg;
 
+	// TODO: Make sure this isn't a permanent change
+	if (!successful ) {
+		Serial.println("Couldn't get JSON. Resetting Timer for 10");
+		weatherTimer.initializeMs(10000, getWeather).start();
+	}
 
 	String response = client.getResponseString();
 	Serial.println("Server response: '" + response + "'");
 	if (response.length() > 0)
 	{
-		char *response_char = new char[response.length() + 1];
-		strcpy(response_char, response.c_str());
-		response = "";
-
 		DynamicJsonBuffer jsonBuffer;
-		// apparently "ArduinoJson v5.0-beta, you can avoid the String copy because JsonBuffer::parseObject() can take a String as a parameter"
-		JsonObject& jsonWeather = jsonBuffer.parseObject(response_char);
-		if (!jsonWeather.success()) {                            // everything OK
+		JsonObject& jsonWeather = jsonBuffer.parseObject(response);
+		if (!jsonWeather.success()) { // JSON Parser failed
 		      Serial.println("JSON Parser failed !!!");
 		      return;
 		  }
 
-		if (jsonWeather["main"]["temp"].is<long>()) {
-			// we have a long
-			// cast_long_to ????
-			double temp_temp = jsonWeather["main"]["temp"].as<long>();
-			display_data.weather_Temp = round(temp_temp);
-		} else {
-			// most likely an integer
-			display_data.weather_Temp = jsonWeather["main"]["temp"].as<int>();
-		}
+
+// Produces :Fatal exception 2(InstructionRetchErrorCause):
+//		epc1=0x3fff0988, epc2=0x00000000, epc3=0x00000000, excvaddr=0x3fff0988, depc=0x00000000
+//		if (jsonWeather["main"]["temp"].is<double>()) {
+//			// we have a double
+//
+//			Serial.println("WE HAVE A DOUBLE !!!!");
+//
+//			double temp_temp = jsonWeather["main"]["temp"].as<double>();
+////			display_data.weather_Temp = (int)lround(temp_temp);
+//		} else if (jsonWeather["main"]["temp"].is<int>()) {
+////			// most likely an integer
+////			display_data.weather_Temp = jsonWeather["main"]["temp"].as<int>();
+//		} else {
+////			display_data.weather_Temp = -273;
+//		}
+		display_data.weather_Temp = (int) lround ( jsonWeather["main"]["temp"].as<double>() );
 
 
 
-		display_data.weather_Humidity = (int) jsonWeather["main"]["humidity"];
+		display_data.weather_Humidity = (int) jsonWeather["main"]["humidity"].as<int>();
 		display_data.weather_Description = jsonWeather["weather"][0]["description"].as<String>();
 
 		// Adjust for timezone
-		display_data.weather_SunRise = (long) jsonWeather["sys"]["sunrise"] + (SECS_PER_HOUR * cfg_local["time_zone"].as<double>());
-		display_data.weather_SunSet = (long) jsonWeather["sys"]["sunset"] + (SECS_PER_HOUR * cfg_local["time_zone"].as<double>());
+		display_data.weather_SunRise = (long) jsonWeather["sys"]["sunrise"].as<long>() + (SECS_PER_HOUR * cfg_local["time_zone"].as<double>());
+		display_data.weather_SunSet = (long) jsonWeather["sys"]["sunset"].as<long>() + (SECS_PER_HOUR * cfg_local["time_zone"].as<double>());
 
 		Serial.println("===========");
 		Serial.print("Temperature: ");
@@ -401,9 +409,6 @@ void onGetWeather(HttpClient& client, bool successful) {
 	    Serial.println(system_get_free_heap_size());
 		Serial.println("===========");
 
-		// Clean up the response_char we just used and the JSON Buffer we just used so we don't fill it up
-		delete [] response_char;
-		// Jsonbuffer distructor will take care of that
 
 		readyWeather = true;
 	}
@@ -430,6 +435,7 @@ void getWeather(){
 	String url = cfg_weather["url"].as<String>() + "?id=" + cfg_weather["city_id"].as<String>() + temp_url_req  + "&appid=" + cfg_weather["api_key"].as<String>();
 //	String url = "http://www.quanttrom.com/weather.json";
 
+
 	httpWeather.downloadString( url ,onGetWeather);
 
 }
@@ -439,7 +445,7 @@ void getWeather(){
 void heartBeatBlink()
 {
 
-	digitalWrite(HEARTBEAT_LED_PIN, heatBeatState);
-	heatBeatState = !heatBeatState;
+	digitalWrite(HEARTBEAT_LED_PIN, heartBeatState);
+	heartBeatState = !heartBeatState;
 
 }

@@ -39,6 +39,7 @@ void getWeather();
 void showWeather();
 void init_system();
 void reboot_system();
+String capitalizeStartLetter(String s);
 void onGotTime(NtpClient& client, time_t time);
 
 
@@ -70,6 +71,23 @@ enum fsm_states {
 	state_reboot
 } current_state;
 
+
+String capitalizeFirstLetter(String s) {
+	// always capitalize first letter
+	bool capitalize = true;
+
+	for(int i=0; i<s.length() ;i++){
+		if ( s[i] == ' ' ){
+			capitalize = true;
+		}else {
+			if (capitalize) s[i]=toupper(s[i]);
+
+			capitalize = false;
+
+		}
+	}
+	return s;
+}
 
 DynamicJsonBuffer jsonConfigBuffer;
 // Declare pointer in order to avoid initializing just yet
@@ -369,7 +387,7 @@ void onGetWeather(HttpClient& client, bool successful) {
 
 		display_data.weather_Temp = (int) lround ( jsonWeather["main"]["temp"].as<double>() );
 		display_data.weather_Humidity = (int) jsonWeather["main"]["humidity"].as<int>();
-		display_data.weather_Description = jsonWeather["weather"][0]["description"].as<String>();
+		display_data.weather_Description = capitalizeFirstLetter( jsonWeather["weather"][0]["description"].as<String>() );
 
 		// Adjust for timezone
 		display_data.weather_SunRise = (long) jsonWeather["sys"]["sunrise"].as<long>() + (SECS_PER_HOUR * cfg_local["time_zone"].as<double>());

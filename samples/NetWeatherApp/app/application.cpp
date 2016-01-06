@@ -1,11 +1,10 @@
 // NetWeather
+// Emil Mitev <quanttrom@gmail.com>
 
 #include "configuration.h"
 #include <SmingCore/SmingCore.h>
 #include <Libraries/LiquidCrystal/LiquidCrystal.h>
 #include <math.h>
-
-// CANDIDATE FOR A FSM???
 
 
 #include "special_chars.h"
@@ -37,7 +36,7 @@ void showTime();
 void secondsUpdater();
 void getWeather();
 void showWeather();
-void init_system();
+void refrest_data();
 void reboot_system();
 String capitalizeStartLetter(String s);
 void onGotTime(NtpClient& client, time_t time);
@@ -63,9 +62,10 @@ enum tempUnit {
 	Celcius,
 };
 
-enum fsm_states {
-	state_init,
+enum fsm_states{
+	state_refresh,
 	state_waitingForData,
+	state_readyToDisplay,
 	state_showingTime,
 	state_showingWeather,
 	state_reboot
@@ -142,19 +142,47 @@ JsonObject& getConfig(){
 
 
 
-void stageHandler(){
+void stateHandler(){
+	// Localize the config
+	JsonObject& cfg_local = *cfg;
 
 	switch ( current_state ) {
-		case state_init:
-			// Initialize our system and start requesting Data from the net
-			init_system();
+		case state_refresh:
+			// Request that we get data
+			refrest_data();
+			// Move onto next  in a recursive manner, probably not the best, but no timers involved
+			current_state = state_waitingForData;
+			stateHandler();
 			break;
 		case state_waitingForData:
+			// Check every 0.5 second if we are ready to display data
+			// waitForData will update to state showingTime when we have all the data needed
+			stagingTimer.initializeMs(500, stateHandler).start();
 			waitForData();
 			break;
+		case state_readyToDisplay:
+			// Since this is our first state since we got all the needed data, change the display frequency
+			stagingTimer.initializeMs(cfg_local["display_time"].as<int>(), stateHandler).start();
+			// Move onto showingTime next
+			current_state = state_showingTime;
+			Serial.println("STATE: state_readyToDisplay");
+		break;
 		case state_showingTime:
+			showTime();
+			// Schedule an update of time every second so it looks like it's moving and repeat
+			secondsUpdaterTimer.initializeMs(1000, secondsUpdater).start();
+			// Set the next state to showingWeather
+			current_state = state_showingWeather;
+			Serial.println("STATE: state_showingTime");
 			break;
 		case state_showingWeather:
+			// Since this is  after showingTime, stop the secondsUpdater
+			secondsUpdaterTimer.stop();
+			// Show the weather on the screen, set the next state and just sit tight for stagingTimer to call us again
+			showWeather();
+			current_state = state_showingTime;
+			Serial.println("STATE: state_showingWeather");
+
 			break;
 		case state_reboot:
 			reboot_system();
@@ -166,12 +194,20 @@ void stageHandler(){
 	}
 
 
-
+	return;
 }
 
-void init_system(){
+void refrest_data(){
+	// Localize the config
+	JsonObject& cfg_local = *cfg;
 
-return;
+	// getting Time is started by the NtpClient constructor
+
+	// get the current weather, check why I need to do that by investigating NtpClient constructor and timegetter
+	getWeather();
+	// Setup how often we should get new weather info
+	weatherTimer.initializeMs(cfg_local["weather"]["refresh_rate"], getWeather).start();
+	return;
 }
 
 void reboot_system(){
@@ -182,7 +218,7 @@ void reboot_system(){
 
 
 void saveConfig(JsonObject& cfg_local){
-	Serial.print("JSON CONFIG: ");
+	Serial.print("SAVING FOLLOWING JSON CONFIG TO FILE: ");
 	cfg_local.printTo(Serial);
 	Serial.println();
 
@@ -192,51 +228,52 @@ void saveConfig(JsonObject& cfg_local){
 void init()
 {
 //	spiffs_mount(); // Mount file system, in order to work with files
-	// Initialize local reference with our config
+
+	// Initialize local reference with configuration settings
 	JsonObject& cfg_local=getConfig();
-	// point global pointer to our reference
+	// point global pointer to local reference
 	cfg=&cfg_local;
 
 
 	Serial.begin(SERIAL_BAUD_RATE); // 115200 by default
 	Serial.systemDebugOutput(true); // Allow debug output to serial
 
-	//Change CPU freq. to 160MHZ
+	//Change CPU freq. to 160MHz
 	System.setCpuFrequency(eCF_160MHz);
-	Serial.print("New CPU frequency is:");
+	Serial.print("CPU frequency: ");
 	Serial.println((int)System.getCpuFrequency());
 
-	Serial.println("Initializing LCD interface");
-
+	// blink heartbeat LED so we know that board is running
 	pinMode(HEARTBEAT_LED_PIN, OUTPUT);
 	heartBeatTimer.initializeMs(1000, heartBeatBlink).start();
 
+	// Setup Wifi AP
 	WifiAccessPoint.enable(false);
 	WifiStation.waitConnection(WiFiConnected, 30, WiFiFail);
   	WifiStation.config( cfg_local["network"]["ssid"].as<String>() , cfg_local["network"]["password"].as<String>() );
 	WifiStation.enable(true);
+	// The WiFiConnected function will start our FSM and request time + weather
 
-
-	// set timezone hourly difference to UTC
+	// set timezone -> difference from UTC
 	SystemClock.setTimeZone(cfg_local["time_zone"].as<double>());
 
-
-	lcd.begin(16, 2);   // initialize the lcd for 16 chars 2 lines, turn on backlight
+	// Add special LCD characters
+	lcd.begin(16, 2);   // initialize the lcd for 16 chars 2 lines
 	lcd.createChar(1, icon_termometer);
 	lcd.createChar(2, icon_water);
 	lcd.createChar(3, celsius);
 	lcd.createChar(4, icon_clock);
 	lcd.createChar(5, icon_wifi);
 
-//-------- Write characters on the display ------------------
-// NOTE: Cursor Position: (CHAR, LINE) start at 0
-  lcd.clear();
-  lcd.print("Connecting to");
-  lcd.setCursor(15,0);
-  lcd.print("\5");
-  lcd.setCursor(0,1);
-  lcd.print("WiFi ...");
-  lcd.blink();
+	//-------- Write characters on the display ------------------
+	// NOTE: Cursor Position: (CHAR, LINE) start at 0
+	lcd.clear();
+	lcd.print("Connecting to");
+	lcd.setCursor(15,0);
+	lcd.print("\5");
+	lcd.setCursor(0,1);
+	lcd.print("WiFi ...");
+	lcd.blink();
 
 
 
@@ -244,9 +281,9 @@ void init()
 }
 
 void onGotTime(NtpClient &client, time_t time){
-
+	// We have this function so we do not show time displays until we have a time updated through NTP
 	readyTime=true;
-	client.setAutoQuery(true);
+//	client.setAutoQuery(true);
 	client.setAutoUpdateSystemClock(true);
 	SystemClock.setTime(time,eTZ_UTC);
 
@@ -265,13 +302,9 @@ void WiFiConnected(){
 	lcd.print(WifiStation.getIP());
 	lcd.noBlink();
 
-
-
-	getWeather();
-	weatherTimer.initializeMs(cfg_local["weather"]["refresh_rate"], getWeather).start();
-
-	stagingTimer.initializeMs(cfg_local["display_time"].as<int>(), waitForData).startOnce();
-
+	// Once we are connected to WiFi start the FSM
+	current_state = state_refresh;
+	stateHandler();
 }
 
 void WiFiFail(){
@@ -293,12 +326,12 @@ void waitForData(){
 	lcd.print("Time & Weather...");
 	lcd.blink();
 
-	// Wait until we have ready weather and time
+	// Change to the next display when we have the time data
 	if (readyWeather && readyTime ){
-		showTime();
+		current_state = state_readyToDisplay;
 	} else {
+		// Print a dot so we know we are waiting for data...
 		Serial.print('.');
-		stagingTimer.initializeMs(500, waitForData).startOnce();
 	}
 }
 
@@ -313,17 +346,13 @@ void showTime(){
 	DateTime time_now = SystemClock.now();
 
 	lcd.print(time_now.toShortTimeString(true));
-	// Wait 3 seconds then show the weather
+
 	lcd.setCursor(0,1);
 	lcd.print("R ");
 	lcd.print(display_data.weather_SunRise.toShortTimeString());
 	lcd.print(" S ");
 	lcd.print(display_data.weather_SunSet.toShortTimeString());
 
-	// Update the time every 1s so it looks like it's moving and repeat
-	secondsUpdaterTimer.initializeMs(1000, secondsUpdater).start(true);
-
-	stagingTimer.initializeMs(cfg_local["display_time"].as<int>(), showWeather).startOnce();
 }
 
 void secondsUpdater(){
@@ -337,7 +366,6 @@ void secondsUpdater(){
 void showWeather(){
 	// Localize the config
 	JsonObject& cfg_local = *cfg;
-	secondsUpdaterTimer.stop();
 	lcd.clear();
 	lcd.noBlink();
 	lcd.print("\1 ");
@@ -359,8 +387,6 @@ void showWeather(){
 	lcd.setCursor(0,1);
 	lcd.print(display_data.weather_Description);
 
-
-	stagingTimer.initializeMs(cfg_local["display_time"].as<int>(), showTime).startOnce();
 }
 
 void onGetWeather(HttpClient& client, bool successful) {
@@ -426,10 +452,10 @@ void getWeather(){
 
 	String temp_url_req;
 	switch ( cfg_weather["units"].as<int>() ) {
-	case Fahrenheit: temp_url_req = "&units=imperial"; break;
-	case Kelvin: temp_url_req = ""; break;
-	case Celcius: temp_url_req = "&units=metric"; break;
-	default: temp_url_req = "&units=metric";
+		case Fahrenheit: temp_url_req = "&units=imperial"; break;
+		case Kelvin: temp_url_req = ""; break;
+		case Celcius: temp_url_req = "&units=metric"; break;
+		default: temp_url_req = "&units=metric";
 	}
 
 	String url = cfg_weather["url"].as<String>() + "?id=" + cfg_weather["city_id"].as<String>() + temp_url_req  + "&appid=" + cfg_weather["api_key"].as<String>();

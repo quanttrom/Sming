@@ -25,6 +25,7 @@ HttpClient httpWeather;
 
 bool readyWeather = false;
 bool readyTime = false;
+bool updatedWaitingForDataDisplay = false;
 
 
 void onGetWeather(HttpClient& client, bool successful);
@@ -36,7 +37,7 @@ void showTime();
 void secondsUpdater();
 void getWeather();
 void showWeather();
-void refrest_data();
+void refresh_data();
 void reboot_system();
 String capitalizeStartLetter(String s);
 void onGotTime(NtpClient& client, time_t time);
@@ -69,7 +70,7 @@ enum fsm_states{
 	state_showingTime,
 	state_showingWeather,
 	state_reboot
-} current_state;
+} next_state;
 
 
 String capitalizeFirstLetter(String s) {
@@ -146,50 +147,53 @@ void stateHandler(){
 	// Localize the config
 	JsonObject& cfg_local = *cfg;
 
-	switch ( current_state ) {
+	switch ( next_state ) {
 		case state_refresh:
 			// Request that we get data
-			refrest_data();
+			refresh_data();
 			// Move onto next  in a recursive manner, probably not the best, but no timers involved
-			current_state = state_waitingForData;
+			next_state = state_waitingForData;
 			stateHandler();
 			break;
 		case state_waitingForData:
-			// Check every 0.5 second if we are ready to display data
+			// Check every 0.2 second if we are ready to display data
 			// waitForData will update to state showingTime when we have all the data needed
-			stagingTimer.initializeMs(500, stateHandler).start();
+			stagingTimer.initializeMs(200, stateHandler).start();
 			waitForData();
 			break;
 		case state_readyToDisplay:
-			// Since this is our first state since we got all the needed data, change the display frequency
-			stagingTimer.initializeMs(cfg_local["display_time"].as<int>(), stateHandler).start();
-			// Move onto showingTime next
-			current_state = state_showingTime;
 			Serial.println("STATE: state_readyToDisplay");
-		break;
+			// Since this is our first state since we got all the needed data, change the display frequency
+			// Move onto showingTime next
+			next_state = state_showingTime;
+			// related to the getWeather ,check why I need to do that by investigating NtpClient constructor and timegetter
+			stateHandler();
+			stagingTimer.initializeMs(cfg_local["display_time"].as<int>(), stateHandler).start();
+			break;
 		case state_showingTime:
+			Serial.println("STATE: state_showingTime");
+
 			showTime();
-			// Schedule an update of time every second so it looks like it's moving and repeat
+			// Schedule an update of time every second so it looks like it's changing and repeat
 			secondsUpdaterTimer.initializeMs(1000, secondsUpdater).start();
 			// Set the next state to showingWeather
-			current_state = state_showingWeather;
-			Serial.println("STATE: state_showingTime");
+			next_state = state_showingWeather;
 			break;
 		case state_showingWeather:
+			Serial.println("STATE: state_showingWeather");
+
 			// Since this is  after showingTime, stop the secondsUpdater
 			secondsUpdaterTimer.stop();
 			// Show the weather on the screen, set the next state and just sit tight for stagingTimer to call us again
 			showWeather();
-			current_state = state_showingTime;
-			Serial.println("STATE: state_showingWeather");
-
+			next_state = state_showingTime;
 			break;
 		case state_reboot:
 			reboot_system();
 			break;
 		default:
 			// We shouldn't be here...
-			current_state = state_reboot;
+			next_state = state_reboot;
 			break;
 	}
 
@@ -197,7 +201,7 @@ void stateHandler(){
 	return;
 }
 
-void refrest_data(){
+void refresh_data(){
 	// Localize the config
 	JsonObject& cfg_local = *cfg;
 
@@ -303,7 +307,7 @@ void WiFiConnected(){
 	lcd.noBlink();
 
 	// Once we are connected to WiFi start the FSM
-	current_state = state_refresh;
+	next_state = state_refresh;
 	stateHandler();
 }
 
@@ -320,15 +324,18 @@ void WiFiFail(){
 void waitForData(){
 	// Localize the config
 	JsonObject& cfg_local = *cfg;
-	lcd.clear();
-	lcd.print("Updating Net");
-	lcd.setCursor(0,1);
-	lcd.print("Time & Weather...");
-	lcd.blink();
+//	if(!updatedWaitingForDataDisplay){
+		lcd.clear();
+		lcd.print("Updating Net");
+		lcd.setCursor(0,1);
+		lcd.print("Time & Weather");
+		lcd.blink();
+		updatedWaitingForDataDisplay = true;
+//	}
 
 	// Change to the next display when we have the time data
 	if (readyWeather && readyTime ){
-		current_state = state_readyToDisplay;
+		next_state = state_readyToDisplay;
 	} else {
 		// Print a dot so we know we are waiting for data...
 		Serial.print('.');

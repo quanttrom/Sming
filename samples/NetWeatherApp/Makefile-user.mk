@@ -37,3 +37,6 @@
 #DISABLE_SPIFFS = 1
 SPIFF_FILES = web
 
+# Added by Emil
+# Make the programming go fast !
+COM_SPEED_ESPTOOL = 921600
